@@ -41,7 +41,7 @@
       <div class="hero-kicker">Free · no account · open-source lists</div>
       <h1>Proxy lists, latency checks,<br/><span>one-click connect.</span></h1>
       <p>Korona Proxy imports free proxy servers from public GitHub &amp; GitLab lists,
-         pings every one of them, and routes your whole PC through the proxy you pick.</p>
+         checks them all, and routes your whole PC through the proxy you pick.</p>
       <div class="hero-actions">
         <a class="btn btn-primary btn-lg" id="downloadHeroBtn" href="#" data-dl="releases">
           <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
@@ -56,8 +56,8 @@
     <section class="site-section" id="proxies">
       <div class="section-head">
         <h2>Live proxy browser</h2>
-        <p>Fetched straight from public lists in your browser. Ping shown here is an
-           <b>estimate</b> — the desktop app measures true TCP latency and does system-wide connect.</p>
+        <p>Fetched straight from public lists in your browser — copy any address into the app.
+           True TCP latency checks and system-wide connect live in the <b>desktop app</b>.</p>
       </div>
 
       <!-- Connect card → deep links into the desktop app -->
@@ -81,8 +81,6 @@
 
       <div class="sidebar-stats site-stats">
         <div class="stat"><span class="stat-val" id="statTotal">0</span><span class="stat-key">total</span></div>
-        <div class="stat"><span class="stat-val" id="statAlive">0</span><span class="stat-key">alive*</span></div>
-        <div class="stat"><span class="stat-val" id="statBest">—</span><span class="stat-key">best ms</span></div>
       </div>
 
       <div class="toolbar site-toolbar">
@@ -99,10 +97,6 @@
         <select class="select" id="sourceSelect">
           <option value="all">All sources</option>
         </select>
-        <button class="btn btn-ghost" id="pingBtn">
-          <svg viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
-          <span id="pingLabel">Estimate ping</span>
-        </button>
         <button class="btn btn-primary" id="refreshBtn">
           <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>
           Fetch lists
@@ -112,7 +106,6 @@
       <div class="list-head site-list-head">
         <span>Address</span>
         <span class="col-proto">Protocol</span>
-        <span class="col-ping">Ping*</span>
         <span class="col-actions"></span>
       </div>
       <div class="list site-list" id="proxyList"></div>
@@ -141,8 +134,18 @@
           <p>For older machines and 32-bit Windows.</p>
           <a class="btn btn-ghost btn-block" href="#" data-dl="ia32">
             <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
-            Download · ia32
+            Download · 32-bit
           </a>
+        </div>
+        <div class="card dl-card">
+          <div class="dl-badge dim">LINUX</div>
+          <h3>Linux</h3>
+          <p>AppImage runs on most distros. .deb for Ubuntu / Debian.</p>
+          <a class="btn btn-primary btn-block" href="#" data-dl="appimage">
+            <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+            Download · AppImage
+          </a>
+          <a class="btn btn-ghost btn-block" href="#" data-dl="deb">.deb package</a>
         </div>
       </div>
       <p class="dl-alt">Download links come straight from this project's GitHub releases:
@@ -158,8 +161,7 @@
     <footer class="site-footer">
       <div class="brand-name">Korona<span>Proxy</span></div>
       <p>Proxy lists are fetched from public GitHub sources and belong to their owners.
-         Use responsibly and within the laws of your country. Ping shown on this site (*)
-         is a browser-based estimate.</p>
+         Use responsibly and within the laws of your country.</p>
     </footer>
   </main>
 

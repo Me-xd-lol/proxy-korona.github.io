@@ -151,7 +151,7 @@ html, body { height: auto; overflow: auto; scroll-behavior: smooth; }
 .notice-link:hover { text-decoration: underline; }
 
 /* Stats row */
-.site-stats { max-width: 420px; margin-bottom: 14px; grid-template-columns: repeat(3, 1fr); }
+.site-stats { width: max-content; grid-template-columns: auto; margin-bottom: 14px; }
 
 /* Toolbar & list */
 .site-toolbar { padding: 0 0 12px; }
@@ -163,7 +163,7 @@ html, body { height: auto; overflow: auto; scroll-behavior: smooth; }
 
 .site .list-head,
 .site .proxy-row {
-  grid-template-columns: 1fr 92px 96px 112px;
+  grid-template-columns: 1fr 92px 112px;
   padding-left: 0;
   padding-right: 0;
 }
@@ -179,7 +179,7 @@ html, body { height: auto; overflow: auto; scroll-behavior: smooth; }
    ========================================================================== */
 .dl-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px;
 }
 
@@ -272,9 +272,8 @@ html, body { height: auto; overflow: auto; scroll-behavior: smooth; }
   .hero { padding: 60px 0 50px; }
   .dl-grid, .steps { grid-template-columns: 1fr; }
   .site .list-head { display: none; }
-  .site .proxy-row { grid-template-columns: 1fr auto auto; grid-template-areas: "addr proto ping" "addr actions actions"; }
+  .site .proxy-row { grid-template-columns: 1fr auto; grid-template-areas: "addr proto" "addr actions"; }
   .proxy-row .addr { grid-area: addr; }
   .proxy-row .badge { grid-area: proto; justify-self: end; }
-  .proxy-row .ping { grid-area: ping; justify-self: end; }
   .proxy-row .row-actions { grid-area: actions; }
 }

@@ -45,22 +45,57 @@ function refreshWinInet() {
 }
 
 async function setSystemProxy(proxy) {
-  if (process.platform !== 'win32') return false;
-  // WinINET supports HTTP proxies natively; SOCKS via the socks= scheme
-  const server = (proxy.protocol === 'socks4' || proxy.protocol === 'socks5')
-    ? `socks=${proxy.host}:${proxy.port}`
-    : `${proxy.host}:${proxy.port}`;
-  await regAdd('ProxyServer', 'REG_SZ', server);
-  await regAdd('ProxyOverride', 'REG_SZ', '<local>');
-  await regAdd('ProxyEnable', 'REG_DWORD', '1');
-  refreshWinInet();
-  return true;
+  if (process.platform === 'win32') {
+    // WinINET supports HTTP proxies natively; SOCKS via the socks= scheme
+    const server = (proxy.protocol === 'socks4' || proxy.protocol === 'socks5')
+      ? `socks=${proxy.host}:${proxy.port}`
+      : `${proxy.host}:${proxy.port}`;
+    await regAdd('ProxyServer', 'REG_SZ', server);
+    await regAdd('ProxyOverride', 'REG_SZ', '<local>');
+    await regAdd('ProxyEnable', 'REG_DWORD', '1');
+    refreshWinInet();
+    return true;
+  }
+
+  if (process.platform === 'linux') {
+    // GNOME desktop proxy settings (works for GNOME apps & anything honoring them)
+    const has = await execCmd('sh', ['-c', 'command -v gsettings']);
+    if (!has) return false;
+    const g = (args) => execCmd('gsettings', args);
+    await g(['set', 'org.gnome.system.proxy', 'mode', 'manual']);
+    await g(['set', 'org.gnome.system.proxy', 'ignore-hosts', "['localhost', '127.0.0.0/8', '::1']"]);
+    if (proxy.protocol === 'socks4' || proxy.protocol === 'socks5') {
+      await g(['set', 'org.gnome.system.proxy.socks', 'host', proxy.host]);
+      await g(['set', 'org.gnome.system.proxy.socks', 'port', String(proxy.port)]);
+    } else {
+      await g(['set', 'org.gnome.system.proxy.http', 'host', proxy.host]);
+      await g(['set', 'org.gnome.system.proxy.http', 'port', String(proxy.port)]);
+      await g(['set', 'org.gnome.system.proxy.http', 'use-authentication', 'false']);
+      await g(['set', 'org.gnome.system.proxy.https', 'host', proxy.host]);
+      await g(['set', 'org.gnome.system.proxy.https', 'port', String(proxy.port)]);
+    }
+    return true;
+  }
+
+  return false;
 }
 
 async function clearSystemProxy() {
-  if (process.platform !== 'win32') return;
-  await regAdd('ProxyEnable', 'REG_DWORD', '0');
-  refreshWinInet();
+  if (process.platform === 'win32') {
+    await regAdd('ProxyEnable', 'REG_DWORD', '0');
+    refreshWinInet();
+    return;
+  }
+  if (process.platform === 'linux') {
+    const has = await execCmd('sh', ['-c', 'command -v gsettings']);
+    if (has) await execCmd('gsettings', ['set', 'org.gnome.system.proxy', 'mode', 'none']);
+  }
+}
+
+function execCmd(cmd, args) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { windowsHide: true, timeout: 8000 }, (err, stdout) => resolve(err ? null : String(stdout || '')));
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -166,11 +201,20 @@ if (!gotLock) {
     ipcMain.handle('korona:ping', (e, proxy, timeout) => tcpPing(proxy.host, proxy.port, timeout || 3000));
     ipcMain.handle('korona:connect', (e, proxy) => setSystemProxy(proxy));
     ipcMain.handle('korona:disconnect', () => clearSystemProxy());
-    ipcMain.handle('korona:proxy-active', () => new Promise((resolve) => {
-      execFile('reg', ['query', REG_KEY, '/v', 'ProxyEnable'], { windowsHide: true }, (err, stdout) => {
-        resolve(!err && /0x1\b/.test(String(stdout)));
-      });
-    }));
+    ipcMain.handle('korona:proxy-active', async () => {
+      if (process.platform === 'win32') {
+        return new Promise((resolve) => {
+          execFile('reg', ['query', REG_KEY, '/v', 'ProxyEnable'], { windowsHide: true }, (err, stdout) => {
+            resolve(!err && /0x1\b/.test(String(stdout)));
+          });
+        });
+      }
+      if (process.platform === 'linux') {
+        const mode = await execCmd('gsettings', ['get', 'org.gnome.system.proxy', 'mode']);
+        return !!mode && mode.includes('manual');
+      }
+      return false;
+    });
 
     createWindow();
     handleArgs(process.argv);

@@ -12,7 +12,8 @@
 
 const GITHUB_REPO = 'me-xd-lol/proxy-korona.github.io'; // releases live here
 const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
-const ASSET = (arch) => `https://github.com/${GITHUB_REPO}/releases/latest/download/KoronaProxy-Setup-${arch === 'ia32' ? '32' : arch}.exe`;
+const ASSET = (arch) => `https://github.com/${GITHUB_REPO}/releases/latest/download/KoronaProxy-Setup-${arch}.exe`;
+const LINUX_ASSET = (file) => `https://github.com/${GITHUB_REPO}/releases/latest/download/${file}`;
 const SCHEME = 'korona';
 
 const SOURCES = [
@@ -28,11 +29,9 @@ const SOURCES = [
  * State
  * ------------------------------------------------------------------ */
 
-let proxies = [];                 // { id, host, port, protocol, source, latency, alive, pinging }
+let proxies = [];                 // { id, host, port, protocol, source }
 let filter = { q: '', proto: 'all', source: 'all' };
 let selected = null;
-let pinging = false;
-let pingAbort = false;
 let fetching = false;
 
 const $ = (id) => document.getElementById(id);
@@ -54,22 +53,6 @@ function toast(msg, kind = 'warn', ms = 3200) {
 }
 
 function proxyId(p) { return `${p.protocol}|${p.host}|${p.port}`; }
-
-/** Browser ping estimate: opaque fetch to the proxy port, timed. */
-function webPing(proxy, timeoutMs = 3000) {
-  return new Promise((resolve) => {
-    const t0 = performance.now();
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => { ctrl.abort(); resolve(null); }, timeoutMs);
-    fetch(`http://${proxy.host}:${proxy.port}/`, {
-      mode: 'no-cors',
-      cache: 'no-store',
-      redirect: 'manual',
-      signal: ctrl.signal,
-    }).then(() => { clearTimeout(timer); resolve(Math.round(performance.now() - t0)); })
-      .catch(() => { clearTimeout(timer); resolve(null); });
-  });
-}
 
 /* ------------------------------------------------------------------ *
  * Fetch lists
@@ -96,7 +79,7 @@ async function fetchSources() {
         const id = item.id;
         if (known.has(id)) continue;
         known.add(id);
-        proxies.push({ id, host: item.host, port: item.port, protocol: item.protocol, source: src.name, latency: null, alive: null, pinging: false });
+        proxies.push({ id, host: item.host, port: item.port, protocol: item.protocol, source: src.name });
         addedHere++;
       }
       added += addedHere;
@@ -146,21 +129,10 @@ function filtered() {
 }
 
 function rowHTML(p) {
-  const pingClass = p.pinging ? 'checking'
-    : p.alive === null ? 'none'
-    : !p.alive ? 'bad'
-    : p.latency < 150 ? 'good'
-    : p.latency < 500 ? 'mid' : 'bad';
-  const pingText = p.pinging ? '···' : p.alive === null ? 'untested' : p.alive ? p.latency + ' ms' : 'dead';
-
   return `<div class="proxy-row${p.id === selected ? ' selected' : ''}" data-id="${esc(p.id)}">
     <div class="addr"><span class="addr-text">${esc(p.host)}:${p.port}</span></div>
     <span class="badge ${esc(p.protocol)}">${esc(p.protocol)}</span>
-    <span class="ping ${pingClass}">${pingText}</span>
     <div class="row-actions">
-      <button class="row-btn" data-act="ping" title="Estimate ping">
-        <svg viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
-      </button>
       <button class="row-btn" data-act="copy" title="Copy address">
         <svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="0"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
       </button>
@@ -184,61 +156,13 @@ function render() {
 
   $('listFoot').textContent = !list.length ? '' :
     list.length > MAX_ROWS ? `Showing ${MAX_ROWS} of ${list.length} — refine filters to see more` :
-    `${list.length} proxies · ping values are browser estimates`;
+    `${list.length} proxies · copy any address into the app for a real latency check`;
 
   $('connectBtn').disabled = !selected;
 }
 
 function updateStats() {
   $('statTotal').textContent = proxies.length;
-  $('statAlive').textContent = proxies.filter(p => p.alive).length;
-  const best = proxies.reduce((m, p) => p.alive && p.latency != null && p.latency < m ? p.latency : m, Infinity);
-  $('statBest').textContent = best === Infinity ? '—' : best;
-}
-
-/* ------------------------------------------------------------------ *
- * Ping all (estimated)
- * ------------------------------------------------------------------ */
-
-async function runPool(items, worker, concurrency, shouldStop) {
-  let i = 0;
-  await Promise.all(Array.from({ length: concurrency }, async () => {
-    while (i < items.length) {
-      if (shouldStop()) return;
-      await worker(items[i++]);
-    }
-  }));
-}
-
-async function pingAll() {
-  if (pinging) { pingAbort = true; return; }
-  const targets = filtered();
-  if (!targets.length) { toast('Nothing to check — fetch lists first.', 'warn'); return; }
-
-  pinging = true;
-  pingAbort = false;
-  const label = $('pingLabel');
-  let done = 0;
-
-  await runPool(targets, async (p) => {
-    p.pinging = true;
-    updateRow(p);
-    const ms = await webPing(p);
-    p.latency = ms;
-    p.alive = ms != null;
-    p.pinging = false;
-    updateRow(p);
-    done++;
-    if (done % 10 === 0 || done === targets.length) label.textContent = `${done}/${targets.length}`;
-    if (done % 50 === 0) { render(); updateStats(); }
-  }, 12, () => pingAbort);
-
-  pinging = false;
-  label.textContent = 'Estimate ping';
-  render();
-  updateStats();
-  const alive = targets.filter(p => p.alive).length;
-  toast(`Estimated ${alive}/${targets.length} alive. Install the app for true TCP ping.`, 'ok', 4200);
 }
 
 /* ------------------------------------------------------------------ *
@@ -282,7 +206,10 @@ function bind() {
   // download links
   document.querySelectorAll('[data-dl]').forEach(a => {
     const kind = a.dataset.dl;
-    a.href = kind === 'releases' ? RELEASES_URL : ASSET(kind);
+    a.href = kind === 'releases' ? RELEASES_URL
+      : kind === 'appimage' ? LINUX_ASSET('KoronaProxy-x86_64.AppImage')
+      : kind === 'deb' ? LINUX_ASSET('KoronaProxy-x86_64.deb')
+      : ASSET(kind);
     a.target = '_blank';
     a.rel = 'noopener';
   });
@@ -291,17 +218,6 @@ function bind() {
   $('protoFilter').addEventListener('change', e => { filter.proto = e.target.value; render(); });
   $('sourceSelect').addEventListener('change', e => { filter.source = e.target.value; render(); });
   $('refreshBtn').addEventListener('click', fetchSources);
-
-  // On HTTPS pages (GitHub Pages), browsers block http:// fetches — ping
-  // estimates are impossible, so the button points people to the app instead.
-  if (location.protocol === 'https:') {
-    const pb = $('pingBtn');
-    pb.disabled = true;
-    pb.title = 'Ping checks need the Korona Proxy app (browsers block http:// checks on https pages)';
-    $('pingLabel').textContent = 'Ping: use the app';
-  } else {
-    $('pingBtn').addEventListener('click', pingAll);
-  }
 
   $('proxyList').addEventListener('click', async (e) => {
     const row = e.target.closest('.proxy-row');
@@ -313,13 +229,6 @@ function bind() {
     if (act === 'copy') {
       try { await navigator.clipboard.writeText(`${p.protocol}://${p.host}:${p.port}`); toast('Address copied.', 'ok', 1600); }
       catch { toast('Copy failed.', 'err'); }
-      return;
-    }
-    if (act === 'ping') {
-      p.pinging = true; render();
-      const ms = await webPing(p);
-      p.latency = ms; p.alive = ms != null; p.pinging = false;
-      render(); updateStats();
       return;
     }
     // select for connect
