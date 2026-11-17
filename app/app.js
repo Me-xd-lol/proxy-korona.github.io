@@ -198,6 +198,27 @@ function mergeProxies(items, source) {
   return { added, merged };
 }
 
+/** Remove a source's contribution: proxies provided ONLY by it are deleted,
+ *  shared ones just drop it from their providers list. */
+function purgeSourceProxies(srcId) {
+  const activeId = state.conn.status === 'connected' ? state.conn.id : null;
+  const keep = [];
+  let removed = 0;
+  for (const p of state.proxies) {
+    if (!p.providers) p.providers = [p.source || 'manual'];
+    const i = p.providers.indexOf(srcId);
+    if (i === -1 || p.id === activeId) { keep.push(p); continue; }
+    p.providers.splice(i, 1);
+    if (p.providers.length) keep.push(p);
+    else removed++;
+  }
+  state.proxies = keep;
+  saveProxies();
+  render();
+  updateStats();
+  return removed;
+}
+
 /* ------------------------------------------------------------------ *
  * Latency checks
  * ------------------------------------------------------------------ */
@@ -660,9 +681,10 @@ function bindEvents() {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'sync') await syncSource(src);
     if (act === 'remove') {
+      const n = purgeSourceProxies(src.id);
       state.sources = state.sources.filter(s => s.id !== src.id);
-      saveSources(); renderSources();
-      toast(`Source removed: ${src.name}`, 'ok');
+      saveSources(); renderSources(); render(); updateStats();
+      toast(n ? `${src.name} removed with ${n} proxies.` : `Source removed: ${src.name}`, 'ok');
     }
   });
 
@@ -674,6 +696,10 @@ function bindEvents() {
       src.enabled = e.target.checked;
       saveSources();
       $('navSourceCount').textContent = state.sources.filter(s => s.enabled).length;
+      if (!src.enabled) {
+        const n = purgeSourceProxies(src.id);
+        toast(n ? `${src.name}: unsynced — removed ${n} proxies.` : `${src.name}: unsynced — no exclusive proxies to remove.`, 'ok');
+      }
     }
   });
 
