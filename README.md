@@ -77,8 +77,8 @@ sudo install -m 755 korona /usr/local/bin/korona
 korona                        # interactive session (prompt + tab-completion + picker)
 korona fetch                  # sync proxy lists from GitHub
 korona list [n]               # show proxies, best ping first
-korona ping [n|--all]         # true TCP latency check
-korona connect [#|addr]       # system-wide proxy (Windows registry / GNOME gsettings)
+korona ping [n|--all]         # verify: handshake through the proxy + exit country (default 20; --all/--fast = raw TCP)
+korona connect [#|addr]       # test first, then system-wide proxy (Windows registry / GNOME gsettings; --force skips test)
 korona disconnect             # back to direct connection
 korona status
 ```

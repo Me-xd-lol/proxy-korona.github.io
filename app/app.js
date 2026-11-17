@@ -28,7 +28,7 @@ const defaultSettings = {
   pingTimeout: 3000,
   concurrency: 12,
   autoRefreshHours: 12,
-  geoLookup: false,
+  geoLookup: true,   // countries come with the honest ping anyway; batch lookup fills the rest
 };
 
 const defaultSources = [
@@ -247,15 +247,25 @@ function webPing(proxy, timeoutMs) {
 async function pingProxy(proxy) {
   const started = Date.now();
   let ms = null;
+  let works = null;      // from the bridge's real handshake check
+  let country = null;
   try {
     if (bridge && typeof bridge.ping === 'function') {
-      ms = await bridge.ping(proxy, state.settings.pingTimeout);
+      const r = await bridge.ping(proxy, state.settings.pingTimeout);
+      if (typeof r === 'number') {
+        ms = r;                       // legacy bridge: raw TCP only
+      } else if (r && typeof r === 'object') {
+        ms = r.ms;
+        works = r.alive === true;     // proxy actually relays traffic
+        if (r.country) country = r.country;
+      }
     } else {
       ms = await webPing(proxy, state.settings.pingTimeout);
     }
   } catch { ms = null; }
   proxy.latency = ms;
-  proxy.alive = ms != null && ms > 0;
+  proxy.alive = works != null ? works : (ms != null && ms > 0);
+  if (country) proxy.country = country;
   proxy.lastChecked = started;
   return proxy;
 }

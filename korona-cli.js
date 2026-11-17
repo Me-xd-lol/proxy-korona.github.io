@@ -19,6 +19,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
+const dns = require('dns');
 const readline = require('readline');
 const { execFile } = require('child_process');
 
@@ -133,8 +134,10 @@ function save(db) {
 }
 
 function sortedProxies(db) {
-  return Object.values(db.proxies).sort((a, b) =>
-    (a.latency == null ? 9e9 : a.latency) - (b.latency == null ? 9e9 : b.latency));
+  return Object.values(db.proxies).sort((a, b) => {
+    const key = (p) => (p.alive === false ? 9e9 : (p.latency == null ? 9e8 : p.latency));  // working → untested → dead
+    return key(a) - key(b);
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -170,6 +173,134 @@ async function pool(items, worker, concurrency = 10) {
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (i < items.length) await worker(items[i++]);
   }));
+}
+
+/* ------------------------------------------------------------------ *
+ * Full proxy verification — the honest check.
+ * TCP connect alone proves nothing (a dead proxy can accept the socket),
+ * so we speak the proxy's own protocol to it and fetch our exit IP +
+ * country through the tunnel. Result: real alive/dead + region.
+ * ------------------------------------------------------------------ */
+const GEO_ECHO_HOST = 'ip-api.com';
+const GEO_ECHO_PATH = '/json/?fields=status,countryCode,query';
+
+function dnsLookup4(host) {
+  return new Promise((resolve) => {
+    dns.lookup(host, { family: 4 }, (err, addr) => resolve(err ? null : addr));
+  });
+}
+
+/** Read from the socket until the server closes it. Full text or null. */
+function readUntilClose(socket, timeoutMs) {
+  return new Promise((resolve) => {
+    let buf = '';
+    let done = false;
+    const finish = (val) => { if (!done) { done = true; clearTimeout(timer); resolve(val); } };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    socket.on('data', (d) => { buf += d.toString('utf8'); });
+    socket.on('close', () => finish(buf));
+    socket.on('error', () => finish(null));
+  });
+}
+
+/** Plain HTTP GET written on an already-connected socket (absolute form → via proxy). */
+function httpOverSocket(socket, timeoutMs) {
+  socket.write(`GET http://${GEO_ECHO_HOST}${GEO_ECHO_PATH} HTTP/1.1\r\nHost: ${GEO_ECHO_HOST}\r\nUser-Agent: korona-cli\r\nConnection: close\r\n\r\n`);
+  return readUntilClose(socket, timeoutMs);
+}
+
+/** SOCKS5: greeting (no auth) → connect request → server connects out for us. */
+function socks5Handshake(socket, host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const hb = Buffer.from(host, 'ascii');
+    let stage = 0, buf = Buffer.alloc(0), done = false;
+    const finish = (ok) => { if (!done) { done = true; socket.removeListener('data', onData); clearTimeout(timer); resolve(ok); } };
+    const onData = (d) => {
+      buf = Buffer.concat([buf, d]);
+      if (stage === 0 && buf.length >= 2) {
+        if (buf[0] !== 5 || buf[1] !== 0) return finish(false);   // not a SOCKS5 proxy / no free auth
+        stage = 1;
+        socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, hb.length]), hb, Buffer.from([port >> 8, port & 255])]));
+      } else if (stage === 1 && buf.length >= 4) {
+        const atyp = buf[3];
+        const need = 6 + (atyp === 1 ? 4 : atyp === 3 ? 1 + buf[4] : 16);
+        if (buf.length >= need) finish(buf[1] === 0);
+      }
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.on('data', onData);
+    socket.once('error', () => finish(false));
+    socket.write(Buffer.from([5, 1, 0]));
+  });
+}
+
+/** SOCKS4: IP-only connect request (we resolve the target ourselves). */
+function socks4Handshake(socket, hostIp, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const b = Buffer.alloc(9);
+    b[0] = 4; b[1] = 1; b.writeUInt16BE(port, 2);
+    const o = hostIp.split('.').map(Number);
+    b[4] = o[0] & 255; b[5] = o[1] & 255; b[6] = o[2] & 255; b[7] = o[3] & 255;
+    let buf = Buffer.alloc(0), done = false;
+    const finish = (ok) => { if (!done) { done = true; socket.removeListener('data', onData); clearTimeout(timer); resolve(ok); } };
+    const onData = (d) => { buf = Buffer.concat([buf, d]); if (buf.length >= 8) finish(buf[1] === 0x5a); };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.on('data', onData);
+    socket.once('error', () => finish(false));
+    socket.write(b);
+  });
+}
+
+/** Pull status/country/exit-IP out of the ip-api HTTP response (chunked-safe). */
+function parseEcho(data, res) {
+  if (!data || !/^HTTP\/1\.\d 2\d\d/.test(data)) return;
+  res.alive = true;
+  const cc = data.match(/"countryCode"\s*:\s*"([A-Z]{2})"/);
+  if (cc) res.country = cc[1];
+  const ip = data.match(/"query"\s*:\s*"([\d.]+)"/);
+  if (ip) res.exitIp = ip[1];
+}
+
+/**
+ * Verify a proxy end to end.
+ * @returns {Promise<{ms: number|null, alive: boolean, country: string|null, exitIp: string|null}>}
+ *   ms = TCP connect latency; alive = the proxy actually relays traffic.
+ */
+async function fullCheck(p, tcpTimeoutMs = 3000) {
+  const res = { ms: null, alive: false, country: null, exitIp: null };
+  const t0 = Date.now();
+  const socket = new net.Socket();
+  let connected = false;
+  try {
+    connected = await new Promise((resolve) => {
+      socket.setTimeout(tcpTimeoutMs);
+      socket.once('connect', () => resolve(true));
+      socket.once('error', () => resolve(false));
+      socket.once('timeout', () => resolve(false));
+      socket.connect(p.port, p.host);
+    });
+  } catch { connected = false; }
+  if (!connected) { socket.destroy(); return res; }
+  res.ms = Date.now() - t0;
+
+  const HOP_MS = tcpTimeoutMs + 4000;   // extra time for the tunnel round-trip
+  try {
+    if (p.protocol === 'http') {
+      const data = await httpOverSocket(socket, HOP_MS);
+      parseEcho(data, res);
+    } else if (p.protocol === 'socks5') {
+      const ok = await socks5Handshake(socket, GEO_ECHO_HOST, 80, HOP_MS);
+      if (ok) parseEcho(await httpOverSocket(socket, HOP_MS), res);
+    } else if (p.protocol === 'socks4') {
+      const ip = await dnsLookup4(GEO_ECHO_HOST);
+      if (ip) {
+        const ok = await socks4Handshake(socket, ip, 80, HOP_MS);
+        if (ok) parseEcho(await httpOverSocket(socket, HOP_MS), res);
+      }
+    }
+  } catch { /* keep whatever we learned */ }
+  socket.destroy();
+  return res;
 }
 
 /* System-wide proxy: Windows registry (WinINET) or GNOME gsettings. */
@@ -268,7 +399,8 @@ async function cmdFetch() {
       const items = parseAll(await fetchText(src.url), src.proto);
       for (const it of items) {
         if (!db.proxies[it.id]) added++;
-        db.proxies[it.id] = { host: it.host, port: it.port, protocol: it.protocol, source: src.id, latency: db.proxies[it.id]?.latency ?? null, lastChecked: db.proxies[it.id]?.lastChecked ?? 0 };
+        const old = db.proxies[it.id];
+        db.proxies[it.id] = { host: it.host, port: it.port, protocol: it.protocol, source: src.id, latency: old?.latency ?? null, lastChecked: old?.lastChecked ?? 0, country: old?.country ?? null };
       }
       total += items.length;
       console.log(C.g(`${items.length} found`));
@@ -284,32 +416,51 @@ function cmdList(n) {
   const db = load();
   const list = sortedProxies(db).slice(0, n || 20);
   if (!list.length) return console.log(C.y('Database is empty — run "korona fetch" first.'));
-  console.log(`${C.dim('#   address                  proto   ping      source')}`);
+  console.log(`${C.dim('#   address                  proto   ping      geo    source')}`);
   list.forEach((p, i) => {
-    const ping = pingColor(p.latency);
-    console.log(`${String(i).padEnd(3)} ${(p.host + ':' + p.port).padEnd(24)} ${p.protocol.padEnd(7)} ${String(ping).padEnd(12)} ${C.dim(p.source)}`);
+    const ping = p.alive === false ? C.r('dead') : pingColor(p.latency);
+    const geo = p.country ? C.b(p.country) : C.dim('—');
+    console.log(`${String(i).padEnd(3)} ${(p.host + ':' + p.port).padEnd(24)} ${p.protocol.padEnd(7)} ${String(ping).padEnd(10)} ${String(geo).padEnd(6)} ${C.dim(p.source)}`);
   });
 }
 
 async function cmdPing(arg) {
   const db = load();
-  const all = arg === '--all';
-  const targets = all ? sortedProxies(db) : sortedProxies(db).slice(0, +arg || 20);
+  const tokens = String(arg || '').split(/\s+/).filter(Boolean);
+  const all = tokens.includes('--all');
+  const fast = tokens.includes('--fast');
+  const verify = tokens.includes('--verify');
+  const nTok = tokens.find(t => /^\d+$/.test(t));
+  const n = nTok ? +nTok : 20;
+  // honest handshake check for small runs (default), raw TCP for --all / --fast
+  const full = !fast && (all ? verify : n <= 100);
+  const targets = all ? sortedProxies(db) : sortedProxies(db).slice(0, n);
   if (!targets.length) return console.log(C.y('Database is empty — run "korona fetch" first.'));
-  console.log(C.dim(`TCP pinging ${targets.length} proxies (10 at a time)...`));
+
+  console.log(C.dim(`${full ? 'verifying' : 'TCP pinging'} ${targets.length} proxies (12 at a time)${full ? ' — checks the proxy actually relays + exit country' : ''}...`));
   let alive = 0, done = 0;
   await pool(targets, async (p) => {
-    const ms = await tcpPing(p.host, p.port);
+    let ms = null, country = null, works = false;
+    if (full) {
+      const r = await fullCheck(p);
+      ms = r.ms; works = r.alive; country = r.country;
+    } else {
+      ms = await tcpPing(p.host, p.port);
+      works = ms != null;
+    }
     p.latency = ms;
+    p.alive = works;
+    if (country) p.country = country;
     p.lastChecked = Date.now();
-    if (ms != null) alive++;
+    if (works) alive++;
     done++;
     const addr = (p.host + ':' + p.port).padEnd(23);
-    const tag = pingColor(ms, true);
-    console.log(`${C.dim(String(done).padStart(4))}  ${addr} ${tag}`);
-  });
+    const geo = country ? ` ${C.b(country)}` : '';
+    const tag = works ? pingColor(ms) : C.r(full ? 'dead' : 'no-answer');
+    console.log(`${C.dim(String(done).padStart(4))}  ${addr} ${tag}${geo}`);
+  }, 12);
   save(db);
-  console.log(`\n${C.g(alive + ' alive')} / ${targets.length} · run "korona list" for the sorted result`);
+  console.log(`\n${C.g(alive + ' working')} / ${targets.length} · run "korona list" for the sorted result`);
 }
 
 function pingColor(ms, dead) {
@@ -325,7 +476,9 @@ async function pickProxy(db) {
   if (!list.length) { console.log(C.y('Database is empty — run "fetch" first.')); return null; }
   console.log(C.dim('pick a proxy (best ping first):'));
   list.forEach((p, i) => {
-    console.log(`  ${C.b(String(i).padEnd(3))} ${(p.host + ':' + p.port).padEnd(24)} ${p.protocol.padEnd(7)} ${pingColor(p.latency)} ${C.dim(p.source)}`);
+    const ping = p.alive === false ? C.r('dead') : pingColor(p.latency);
+    const geo = p.country ? C.b(p.country) : C.dim('—');
+    console.log(`  ${C.b(String(i).padEnd(3))} ${(p.host + ':' + p.port).padEnd(24)} ${p.protocol.padEnd(7)} ${ping} ${String(geo).padEnd(6)} ${C.dim(p.source)}`);
   });
   if (!REPL_MODE && process.stdin.isTTY) {
     const answer = await new Promise((resolve) => {
@@ -349,21 +502,40 @@ async function pickProxy(db) {
 async function cmdConnect(arg) {
   const db = load();
   const list = sortedProxies(db);
+  const tokens = String(arg || '').split(/\s+/).filter(Boolean);
+  const force = tokens.includes('--force') || tokens.includes('-f');
+  const target = tokens.find(t => !t.startsWith('-'));
   let p = null;
 
-  if (arg == null) {
+  if (target == null) {
     p = await pickProxy(db);
     if (!p) return;
-  } else if (/^\d+$/.test(arg)) {
-    p = list[+arg];
-    if (!p) return console.log(C.y(`No proxy with index ${arg} — run "korona list".`));
+  } else if (/^\d+$/.test(target)) {
+    p = list[+target];
+    if (!p) return console.log(C.y(`No proxy with index ${target} — run "korona list".`));
   } else {
-    const parsed = parseAll(arg, 'http')[0] || (arg.includes(':') ? { host: arg.split(':')[0], port: +arg.split(':')[1], protocol: 'http' } : null);
+    const parsed = parseAll(target, 'http')[0] || (target.includes(':') ? { host: target.split(':')[0], port: +target.split(':')[1], protocol: 'http' } : null);
     if (!parsed || !validHost(parsed.host) || !validPort(parsed.port)) return console.log(C.r('Invalid proxy address.'));
     const id = `${parsed.protocol}|${parsed.host}|${parsed.port}`;
-    p = db.proxies[id] || { ...parsed, source: 'cli', latency: null, lastChecked: 0 };
+    p = db.proxies[id] || { ...parsed, source: 'cli', latency: null, lastChecked: 0, country: null };
     db.proxies[id] = p;
     save(db);
+  }
+
+  // honest check first — never route the whole system through something dead
+  if (!force) {
+    process.stdout.write(C.dim(`testing ${p.host}:${p.port} ... `));
+    const r = await fullCheck(p);
+    p.latency = r.ms;
+    p.alive = r.alive;
+    if (r.country) p.country = r.country;
+    save(db);
+    if (!r.alive) {
+      console.log(C.r('dead — the proxy does not relay traffic.'));
+      console.log(C.dim('add --force to connect anyway'));
+      return;
+    }
+    console.log(C.g(`alive ${r.ms}ms`) + (r.country ? C.b(` [${r.country}]`) : ''));
   }
 
   console.log(C.dim(`routing system traffic via ${p.protocol}://${p.host}:${p.port} ...`));
@@ -381,11 +553,13 @@ async function cmdDisconnect() {
 async function cmdStatus() {
   const db = load();
   const active = await sysActive();
-  const total = Object.keys(db.proxies).length;
-  const alive = Object.values(db.proxies).filter(p => p.latency != null).length;
-  const best = Math.min(...Object.values(db.proxies).map(p => p.latency == null ? Infinity : p.latency));
+  const all = Object.values(db.proxies);
+  const total = all.length;
+  const alive = all.filter(p => p.alive).length;
+  const geo = all.filter(p => p.country).length;
+  const best = Math.min(...all.map(p => p.alive && p.latency != null ? p.latency : Infinity));
   console.log(`system proxy: ${active ? C.g('ON') : C.r('off' )}`);
-  console.log(`proxies in database: ${total} (checked: ${alive}, best: ${best === Infinity ? '—' : best + 'ms'})`);
+  console.log(`proxies in database: ${total} (working: ${alive}, geo known: ${geo}, best: ${best === Infinity ? '—' : best + 'ms'})`);
   console.log(C.dim(`database file: ${STORE}`));
 }
 
@@ -394,8 +568,8 @@ function cmdHelp() {
   ${C.y('(no args)')}         interactive session — prompt, tab-completion, picker
   ${C.y('fetch')}                sync proxy lists from GitHub
   ${C.y('list')} [n]            show proxies, best ping first (default 20)
-  ${C.y('ping')} [n|--all]      true TCP latency check
-  ${C.y('connect')} [#|addr]    pick from the list or route an address system-wide
+  ${C.y('ping')} [n|--all]      handshake verify + exit country (default 20; --all/--fast = raw TCP)
+  ${C.y('connect')} [#|addr]    test first, then route system-wide (--force skips the test)
   ${C.y('disconnect')}          restore direct connection
   ${C.y('status')}              system proxy + database info
   ${C.y('install')}             register the "korona" command (per-user, no admin)
@@ -485,11 +659,20 @@ function cmdInteractive() {
 }
 
 /* ------------------------------------------------------------------ *
- * Dispatch
+ * Exports (desktop app reuses the engine; nothing auto-runs on require)
+ * ------------------------------------------------------------------ */
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { tcpPing, fullCheck, parseAll, validHost, validPort, normProto };
+}
+
+/* ------------------------------------------------------------------ *
+ * Dispatch — only when run directly
  * ------------------------------------------------------------------ */
 const COMMANDS = { fetch: cmdFetch, list: cmdList, ping: cmdPing, connect: cmdConnect, disconnect: cmdDisconnect, status: cmdStatus, help: cmdHelp, '--help': cmdHelp, '-h': cmdHelp, install: cmdInstall, uninstall: cmdUninstall };
 
-const [cmd, arg] = process.argv.slice(2);
-if (!cmd) cmdInteractive();
-else if (!COMMANDS[cmd]) { cmdHelp(); process.exit(1); }
-else Promise.resolve(COMMANDS[cmd](arg)).catch(e => { console.error(C.r(e.message)); process.exit(1); });
+if (require.main === module) {
+  const [cmd, arg] = process.argv.slice(2);
+  if (!cmd) cmdInteractive();
+  else if (!COMMANDS[cmd]) { cmdHelp(); process.exit(1); }
+  else Promise.resolve(COMMANDS[cmd](arg)).catch(e => { console.error(C.r(e.message)); process.exit(1); });
+}

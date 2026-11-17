@@ -10,6 +10,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const net = require('net');
 const { execFile } = require('child_process');
 const path = require('path');
+const { fullCheck } = require('./korona-cli.js');   // shared verification engine (handshake + exit country)
 
 const PROTOCOL = 'korona';
 const REG_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
@@ -99,27 +100,10 @@ function execCmd(cmd, args) {
 }
 
 /* ------------------------------------------------------------------ *
- * True TCP latency
+ * True TCP latency — now lives in korona-cli.js (fullCheck, shared with
+ * the CLI): handshake through the proxy + exit-country echo, so "alive"
+ * means the proxy actually relays traffic, not just accepts a socket.
  * ------------------------------------------------------------------ */
-
-function tcpPing(host, port, timeoutMs = 3000) {
-  return new Promise((resolve) => {
-    const t0 = Date.now();
-    const socket = new net.Socket();
-    let done = false;
-    const finish = (ms) => {
-      if (done) return;
-      done = true;
-      socket.destroy();
-      resolve(ms);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once('connect', () => finish(Date.now() - t0));
-    socket.once('error', () => finish(null));
-    socket.once('timeout', () => finish(null));
-    socket.connect(port, host);
-  });
-}
 
 /* ------------------------------------------------------------------ *
  * Deep links — korona://connect?host=&port=&protocol=
@@ -198,7 +182,11 @@ if (!gotLock) {
       app.setAsDefaultProtocolClient(PROTOCOL);
     }
 
-    ipcMain.handle('korona:ping', (e, proxy, timeout) => tcpPing(proxy.host, proxy.port, timeout || 3000));
+    ipcMain.handle('korona:ping', async (e, proxy, timeout) => {
+      // full verification: TCP latency + real proxy handshake + exit country
+      const r = await fullCheck(proxy, timeout || 3000);
+      return { ms: r.ms, alive: r.alive, country: r.country };
+    });
     ipcMain.handle('korona:connect', (e, proxy) => setSystemProxy(proxy));
     ipcMain.handle('korona:disconnect', () => clearSystemProxy());
     ipcMain.handle('korona:proxy-active', async () => {
