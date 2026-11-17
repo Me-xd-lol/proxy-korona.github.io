@@ -12,7 +12,7 @@
 
 const GITHUB_REPO = 'me-xd-lol/proxy-korona.github.io'; // releases live here
 const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
-const ASSET = (arch) => `https://github.com/${GITHUB_REPO}/releases/latest/download/KoronaProxy-Setup-${arch}.exe`;
+const ASSET = (arch) => `https://github.com/${GITHUB_REPO}/releases/latest/download/KoronaProxy-Setup-${arch === 'ia32' ? '32' : arch}.exe`;
 const SCHEME = 'korona';
 
 const SOURCES = [
