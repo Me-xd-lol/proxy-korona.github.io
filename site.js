@@ -208,7 +208,7 @@ function bind() {
     const kind = a.dataset.dl;
     a.href = kind === 'releases' ? RELEASES_URL
       : kind === 'appimage' ? LINUX_ASSET('KoronaProxy-x86_64.AppImage')
-      : kind === 'deb' ? LINUX_ASSET('KoronaProxy-x86_64.deb')
+      : kind === 'deb' ? LINUX_ASSET('KoronaProxy-amd64.deb')
       : ASSET(kind);
     a.target = '_blank';
     a.rel = 'noopener';
