@@ -375,13 +375,13 @@ async function syncSource(src, silent) {
 }
 
 async function syncEnabled(silent) {
-  const enabled = state.sources.filter(s => s.enabled);
-  if (!enabled.length) {
-    if (!silent) toast('No sources enabled.', 'warn');
+  const list = state.sources;
+  if (!list.length) {
+    if (!silent) toast('No sources added yet.', 'warn');
     return;
   }
-  for (const src of enabled) await syncSource(src, silent);
-  if (!silent) toast('All enabled sources synced.', 'ok');
+  for (const src of list) await syncSource(src, silent);
+  if (!silent) toast('All sources synced.', 'ok');
 }
 
 /* ------------------------------------------------------------------ *
@@ -514,7 +514,7 @@ function render() {
     el.classList.toggle('active', el.id === `view-${state.view}`));
 
   $('navProxyCount').textContent = state.proxies.length;
-  $('navSourceCount').textContent = state.sources.filter(s => s.enabled).length;
+  $('navSourceCount').textContent = state.sources.length;
 
   if (state.view === 'proxies') renderList();
   else renderSources();
@@ -544,10 +544,6 @@ function renderSources() {
     <div class="src-card card${s._syncing ? ' syncing' : ''}" data-src="${esc(s.id)}">
       <div class="src-head">
         <div class="src-name">${esc(s.name)}</div>
-        <label class="switch" title="Include in auto-sync">
-          <input type="checkbox" data-act="toggle" ${s.enabled ? 'checked' : ''}/>
-          <span class="track"></span>
-        </label>
       </div>
       <span class="src-url" title="${esc(s.url)}">${esc(s.url)}</span>
       <div class="src-meta">
@@ -558,6 +554,7 @@ function renderSources() {
       </div>
       <div class="src-actions">
         <button class="btn btn-ghost" data-act="sync">Sync now</button>
+        <button class="btn btn-ghost" data-act="clear" title="Remove proxies that come only from this source">Clear proxies</button>
         ${s.builtin ? '' : `<button class="btn btn-danger" data-act="remove">Remove</button>`}
       </div>
     </div>`).join('');
@@ -680,26 +677,15 @@ function bindEvents() {
     if (!src) return;
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'sync') await syncSource(src);
+    if (act === 'clear') {
+      const n = purgeSourceProxies(src.id);
+      toast(n ? `${src.name}: removed ${n} proxies.` : `${src.name}: nothing to clear.`, 'ok');
+    }
     if (act === 'remove') {
       const n = purgeSourceProxies(src.id);
       state.sources = state.sources.filter(s => s.id !== src.id);
       saveSources(); renderSources(); render(); updateStats();
       toast(n ? `${src.name} removed with ${n} proxies.` : `Source removed: ${src.name}`, 'ok');
-    }
-  });
-
-  $('sourcesGrid').addEventListener('change', e => {
-    const card = e.target.closest('[data-src]');
-    if (!card) return;
-    const src = state.sources.find(s => s.id === card.dataset.src);
-    if (src && e.target.dataset.act === 'toggle') {
-      src.enabled = e.target.checked;
-      saveSources();
-      $('navSourceCount').textContent = state.sources.filter(s => s.enabled).length;
-      if (!src.enabled) {
-        const n = purgeSourceProxies(src.id);
-        toast(n ? `${src.name}: unsynced — removed ${n} proxies.` : `${src.name}: unsynced — no exclusive proxies to remove.`, 'ok');
-      }
     }
   });
 
