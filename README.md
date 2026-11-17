@@ -65,12 +65,13 @@ What the desktop wrapper adds over the browser:
 
 ```
 korona-proxy/
-├── app/            # shared core app (UI + logic)
+├── index.html      # the website itself (repo root = GitHub Pages)
+├── site.css / site.js / logo.png
+├── app/            # shared core app (UI + logic, used by site + desktop)
 │   ├── index.html
-│   ├── styles.css  # single source of truth for the design (website imports it)
+│   ├── styles.css  # single source of truth for the design (site imports it)
 │   ├── parse.js    # shared address parser
 │   └── app.js
-├── website/        # static site (index.html + site.css + site.js)
 ├── main.js         # Electron main process (PC app)
 ├── preload.js      # koronaBridge: ping / connect / disconnect / deep links
 └── package.json    # Electron + builder config (x64 + ia32 NSIS)
