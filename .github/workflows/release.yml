@@ -42,6 +42,14 @@ jobs:
             release/*.AppImage
             release/*.deb
 
+      - name: Upload CLI artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli
+          if-no-files-found: error
+          path: korona-cli.js
+
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -62,4 +70,5 @@ jobs:
 
             - Windows: run the Setup exe (x64 = modern PCs, ia32 = 32-bit Windows)
             - Linux: AppImage (chmod +x and run, works on most distros) or .deb (Ubuntu/Debian)
+            - CLI (needs Node 18+): `curl -fL https://github.com/${{ github.repository }}/releases/latest/download/korona-cli.js -o korona && sudo install -m 755 korona /usr/local/bin/korona`
           files: artifacts/*

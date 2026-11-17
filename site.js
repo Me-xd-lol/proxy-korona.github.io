@@ -209,6 +209,7 @@ function bind() {
     a.href = kind === 'releases' ? RELEASES_URL
       : kind === 'appimage' ? LINUX_ASSET('KoronaProxy-x86_64.AppImage')
       : kind === 'deb' ? LINUX_ASSET('KoronaProxy-amd64.deb')
+      : kind === 'cli' ? LINUX_ASSET('korona-cli.js')
       : ASSET(kind);
     a.target = '_blank';
     a.rel = 'noopener';

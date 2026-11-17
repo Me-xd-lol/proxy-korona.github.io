@@ -5,8 +5,9 @@ Free proxy manager: import servers from public GitHub/GitLab lists, check their 
 | Part | Status | Role |
 |---|---|---|
 | Core app (`app/`) | ✅ working | Shared UI + logic, used by every platform |
-| Website (`website/`) | ✅ working | Live list browser + download buttons + connect deep-link |
+| Website (`index.html` at repo root) | ✅ working | Live list browser + download buttons + connect deep-link |
 | PC app (root: `main.js`, `preload.js`) | ✅ working | Electron wrapper — true TCP ping, system-wide connect, korona:// links |
+| CLI (`korona-cli.js`) | ✅ working | Single-file terminal app — same engine, no deps, needs Node 18+ |
 | Mobile | ⏳ later | Capacitor wrapper + native VPN connect |
 
 ## Design system
@@ -33,11 +34,13 @@ Duplicate servers are merged automatically.
 
 ## Website
 
-- Live list browser: fetches public lists, search/filter, browser-estimated ping
+- Live list browser: fetches public lists, search/filter, copy any address into the app for a real latency check
 - **Connect via app** — opens the installed PC app through `korona://connect?host=…&port=…&protocol=…`; if the app isn't installed, a notice with download links appears
 - **Download buttons** — link directly to GitHub release assets:
-  - `KoronaProxy-Setup-x64.exe` (64-bit)
-  - `KoronaProxy-Setup-ia32.exe` (32-bit)
+  - `KoronaProxy-Setup-x64.exe` (64-bit Windows)
+  - `KoronaProxy-Setup-ia32.exe` (32-bit Windows)
+  - `KoronaProxy-x86_64.AppImage` + `KoronaProxy-amd64.deb` (Linux)
+  - `korona-cli.js` (CLI, any OS with Node 18+)
   - fallback: releases page
 
 > Set your repo in `website/site.js` → `GITHUB_REPO` so the download buttons point at your releases.
@@ -57,9 +60,29 @@ Installers land in `release/`:
 What the desktop wrapper adds over the browser:
 
 - **True TCP latency** (`net.Socket` connect timing, no estimates)
-- **System-wide connect** — sets the Windows proxy (registry `ProxyEnable`/`ProxyServer` + WinINET refresh; SOCKS via `socks=host:port`)
+- **System-wide connect** — Windows: registry `ProxyEnable`/`ProxyServer` + WinINET refresh (SOCKS via `socks=host:port`); Linux: GNOME proxy settings via `gsettings`
 - **`korona://` protocol handler** — website Connect button opens the app and auto-connects
 - Single instance lock, dark squared window
+
+## CLI (single file, no deps)
+
+`korona-cli.js` — the same engine as the desktop app in one terminal-friendly file. Requires Node.js 18+ (built-in `fetch`), zero npm dependencies.
+
+```bash
+# install (Linux/macOS)
+curl -fL https://github.com/Me-xd-lol/proxy-korona.github.io/releases/latest/download/korona-cli.js -o korona
+sudo install -m 755 korona /usr/local/bin/korona
+
+# usage
+korona fetch                  # sync proxy lists from GitHub
+korona list [n]               # show proxies, best ping first
+korona ping [n|--all]         # true TCP latency check
+korona connect <id|addr>      # system-wide proxy (Windows registry / GNOME gsettings)
+korona disconnect             # back to direct connection
+korona status
+```
+
+Database lives at `~/.korona-proxy.json`. If `raw.githubusercontent.com` is blocked on the network, the CLI automatically falls back to the GitHub contents API.
 
 ## Structure
 
@@ -67,6 +90,7 @@ What the desktop wrapper adds over the browser:
 korona-proxy/
 ├── index.html      # the website itself (repo root = GitHub Pages)
 ├── site.css / site.js / logo.png
+├── korona-cli.js   # single-file CLI (Node 18+, no deps)
 ├── app/            # shared core app (UI + logic, used by site + desktop)
 │   ├── index.html
 │   ├── styles.css  # single source of truth for the design (site imports it)
@@ -74,7 +98,7 @@ korona-proxy/
 │   └── app.js
 ├── main.js         # Electron main process (PC app)
 ├── preload.js      # koronaBridge: ping / connect / disconnect / deep links
-└── package.json    # Electron + builder config (x64 + ia32 NSIS)
+└── package.json    # Electron + builder config
 ```
 
 ## Bridge contract

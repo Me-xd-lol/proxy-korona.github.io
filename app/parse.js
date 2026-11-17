@@ -104,3 +104,8 @@ function parseAll(text, defaultProto) {
 function parseLine(line, defaultProto) {
   return parseAll(line, defaultProto)[0] || null;
 }
+
+/* Node (CLI) support — browsers don't have `module` */
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { IPV4_RE, HOSTNAME_RE, validHost, validPort, normProto, parsePrefixed, parseAll, parseLine };
+}
