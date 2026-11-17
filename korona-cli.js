@@ -3,13 +3,13 @@
    Korona Proxy CLI — the same engine as the desktop app, no GUI, no deps.
    Needs Node.js 18+. Single file, safe to drop into /usr/local/bin/korona.
 
-     korona fetch                sync all proxy lists from GitHub
-     korona list [n]             show proxies (best ping first)
-     korona ping [n|--all]       true TCP latency check
-     korona connect <id|addr>    system-wide proxy (GNOME / Windows)
-     korona disconnect           back to direct connection
-     korona status               current system proxy + database info
-     korona help
+     korona                     interactive session (prompt + picker)
+     korona fetch               sync all proxy lists from GitHub
+     korona list [n]            show proxies (best ping first)
+     korona ping [n|--all]      true TCP latency check
+     korona connect [#|addr]    system-wide proxy (GNOME / Windows)
+     korona disconnect          back to direct connection
+     korona status              current system proxy + database info
    ========================================================================== */
 
 'use strict';
@@ -18,6 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
+const readline = require('readline');
 const { execFile } = require('child_process');
 
 /* ------------------------------------------------------------------ *
@@ -30,6 +31,9 @@ const C = {
   r: (s) => `\x1b[31m${s}\x1b[0m`,
   dim: (s) => `\x1b[90m${s}\x1b[0m`,
 };
+
+/* true while the interactive session is running */
+let REPL_MODE = false;
 
 /* ------------------------------------------------------------------ *
  * Parser — compact mirror of app/parse.js
@@ -281,7 +285,7 @@ function cmdList(n) {
   if (!list.length) return console.log(C.y('Database is empty — run "korona fetch" first.'));
   console.log(`${C.dim('#   address                  proto   ping      source')}`);
   list.forEach((p, i) => {
-    const ping = p.latency == null ? C.dim('—') : p.latency < 150 ? C.g(p.latency + 'ms') : p.latency < 500 ? C.y(p.latency + 'ms') : C.r(p.latency + 'ms');
+    const ping = pingColor(p.latency);
     console.log(`${String(i).padEnd(3)} ${(p.host + ':' + p.port).padEnd(24)} ${p.protocol.padEnd(7)} ${String(ping).padEnd(12)} ${C.dim(p.source)}`);
   });
 }
@@ -300,11 +304,45 @@ async function cmdPing(arg) {
     if (ms != null) alive++;
     done++;
     const addr = (p.host + ':' + p.port).padEnd(23);
-    const tag = ms == null ? C.r('dead') : ms < 150 ? C.g(ms + 'ms') : ms < 500 ? C.y(ms + 'ms') : C.r(ms + 'ms');
+    const tag = pingColor(ms, true);
     console.log(`${C.dim(String(done).padStart(4))}  ${addr} ${tag}`);
   });
   save(db);
   console.log(`\n${C.g(alive + ' alive')} / ${targets.length} · run "korona list" for the sorted result`);
+}
+
+function pingColor(ms, dead) {
+  if (ms == null) return dead ? C.r('dead') : C.dim('—');
+  if (ms < 150) return C.g(ms + 'ms');
+  if (ms < 500) return C.y(ms + 'ms');
+  return C.r(ms + 'ms');
+}
+
+/* Show the best proxies and let the user pick one to connect. */
+async function pickProxy(db) {
+  const list = sortedProxies(db).slice(0, 15);
+  if (!list.length) { console.log(C.y('Database is empty — run "fetch" first.')); return null; }
+  console.log(C.dim('pick a proxy (best ping first):'));
+  list.forEach((p, i) => {
+    console.log(`  ${C.b(String(i).padEnd(3))} ${(p.host + ':' + p.port).padEnd(24)} ${p.protocol.padEnd(7)} ${pingColor(p.latency)} ${C.dim(p.source)}`);
+  });
+  if (!REPL_MODE && process.stdin.isTTY) {
+    const answer = await new Promise((resolve) => {
+      const r = readline.createInterface({ input: process.stdin, output: process.stdout });
+      r.question(`${C.b('connect to #')} ${C.dim('❯ ')}`, (a) => { r.close(); resolve(String(a || '').trim()); });
+    });
+    if (/^\d+$/.test(answer)) {
+      if (!list[+answer]) console.log(C.y(`No proxy with index ${answer}.`));
+      return list[+answer] || null;
+    }
+    const parsed = answer ? parseAll(answer, 'http')[0] : null;
+    if (!parsed) { console.log(C.y('Cancelled.')); return null; }
+    const id = `${parsed.protocol}|${parsed.host}|${parsed.port}`;
+    if (!db.proxies[id]) db.proxies[id] = { ...parsed, source: 'cli', latency: null, lastChecked: 0 };
+    return db.proxies[id];
+  }
+  console.log(C.dim('→ run "connect <#>"  (or connect <address>)'));
+  return null;
 }
 
 async function cmdConnect(arg) {
@@ -312,8 +350,10 @@ async function cmdConnect(arg) {
   const list = sortedProxies(db);
   let p = null;
 
-  if (arg == null) return console.log(C.y('Usage: korona connect <id from list | 1.2.3.4:8080 | socks5://1.2.3.4:1080>'));
-  if (/^\d+$/.test(arg)) {
+  if (arg == null) {
+    p = await pickProxy(db);
+    if (!p) return;
+  } else if (/^\d+$/.test(arg)) {
     p = list[+arg];
     if (!p) return console.log(C.y(`No proxy with index ${arg} — run "korona list".`));
   } else {
@@ -349,23 +389,63 @@ async function cmdStatus() {
 }
 
 function cmdHelp() {
-  console.log(`${C.b('korona')} — free proxy manager CLI
+  console.log(`${C.y('♛')} ${C.b('korona')} — free proxy manager CLI
+  ${C.y('(no args)')}         interactive session — prompt, tab-completion, picker
   ${C.y('fetch')}                sync proxy lists from GitHub
   ${C.y('list')} [n]            show proxies, best ping first (default 20)
   ${C.y('ping')} [n|--all]      true TCP latency check
-  ${C.y('connect')} <id|addr>   route system traffic via a proxy
+  ${C.y('connect')} [#|addr]    pick from the list or route an address system-wide
   ${C.y('disconnect')}          restore direct connection
-  ${C.y('status')}              system proxy + database info`);
+  ${C.y('status')}              system proxy + database info
+  ${C.y('exit')}                leave the interactive session`);
+}
+
+/* ------------------------------------------------------------------ *
+ * Interactive session — `korona` with no arguments, like opencode / claude
+ * ------------------------------------------------------------------ */
+function cmdInteractive() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) { cmdHelp(); return; }
+  REPL_MODE = true;
+  console.log('');
+  console.log(`  ${C.y('♛')} ${C.b('Korona Proxy')}`);
+  console.log(C.dim('  fetch · list · ping · connect · disconnect · status · help · exit'));
+  console.log('');
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: `${C.y('♛')} ${C.b('korona')} ${C.dim('❯ ')}`,
+    completer: (line) => {
+      const names = [...new Set([...Object.keys(COMMANDS), 'exit', 'quit'])];
+      const hits = names.filter((c) => c.startsWith(line));
+      return [hits.length ? hits : names, line];
+    },
+  });
+  rl.prompt();
+  rl.on('line', async (line) => {
+    line = line.trim();
+    if (!line) { rl.prompt(); return; }
+    const sp = line.indexOf(' ');
+    const c = sp === -1 ? line : line.slice(0, sp);
+    const a = sp === -1 ? undefined : line.slice(sp + 1);
+    if (c === 'exit' || c === 'quit' || c === 'q') { rl.close(); return; }
+    const fn = COMMANDS[c];
+    if (fn) {
+      try { await Promise.resolve(fn(a)); }
+      catch (e) { console.error(C.r(e.message || String(e))); }
+    } else {
+      console.log(C.r(`unknown command: ${c}`) + C.dim('  — "help" lists them all'));
+    }
+    rl.prompt();
+  });
+  rl.on('close', () => { console.log(C.dim('bye 👑')); process.exit(0); });
 }
 
 /* ------------------------------------------------------------------ *
  * Dispatch
  * ------------------------------------------------------------------ */
-const [cmd, arg] = process.argv.slice(2);
-const commands = { fetch: cmdFetch, list: cmdList, ping: cmdPing, connect: cmdConnect, disconnect: cmdDisconnect, status: cmdStatus, help: cmdHelp, '--help': cmdHelp, '-h': cmdHelp };
+const COMMANDS = { fetch: cmdFetch, list: cmdList, ping: cmdPing, connect: cmdConnect, disconnect: cmdDisconnect, status: cmdStatus, help: cmdHelp, '--help': cmdHelp, '-h': cmdHelp };
 
-if (!commands[cmd]) {
-  cmdHelp();
-  process.exit(cmd ? 1 : 0);
-}
-Promise.resolve(commands[cmd](arg)).catch(e => { console.error(C.r(e.message)); process.exit(1); });
+const [cmd, arg] = process.argv.slice(2);
+if (!cmd) cmdInteractive();
+else if (!COMMANDS[cmd]) { cmdHelp(); process.exit(1); }
+else Promise.resolve(COMMANDS[cmd](arg)).catch(e => { console.error(C.r(e.message)); process.exit(1); });
