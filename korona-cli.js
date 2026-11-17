@@ -10,6 +10,7 @@
      korona connect [#|addr]    system-wide proxy (GNOME / Windows)
      korona disconnect          back to direct connection
      korona status              current system proxy + database info
+     korona install             register the "korona" command (win: per-user shim)
    ========================================================================== */
 
 'use strict';
@@ -397,7 +398,50 @@ function cmdHelp() {
   ${C.y('connect')} [#|addr]    pick from the list or route an address system-wide
   ${C.y('disconnect')}          restore direct connection
   ${C.y('status')}              system proxy + database info
+  ${C.y('install')}             register the "korona" command (per-user, no admin)
+  ${C.y('uninstall')}           remove it again
   ${C.y('exit')}                leave the interactive session`);
+  console.log(C.dim('  first time? run:  node korona-cli.js install   → then just "korona" everywhere'));
+}
+
+/* ------------------------------------------------------------------ *
+ * install / uninstall — register "korona" on PATH, no admin required
+ * ------------------------------------------------------------------ */
+function shimTargets() {
+  if (process.platform === 'win32') {
+    const dir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
+    return { dir, dst: path.join(dir, 'korona-cli.js'), shim: path.join(dir, 'korona.cmd') };
+  }
+  const dir = path.join(os.homedir(), '.local', 'bin');
+  return { dir, dst: path.join(dir, 'korona'), shim: null };
+}
+
+function cmdInstall() {
+  const { dir, dst, shim } = shimTargets();
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.copyFileSync(__filename, dst);
+    fs.chmodSync(dst, 0o755);
+    if (shim) fs.writeFileSync(shim, '@echo off\r\nnode "%~dp0korona-cli.js" %*\r\n');
+    console.log(C.g(`installed: "korona" → ${dst}`));
+    console.log(C.dim('open a NEW terminal, then run: korona status'));
+    if (!shim && !String(process.env.PATH || '').split(path.delimiter).includes(dir)) {
+      console.log(C.y(`note: add ~/.local/bin to PATH if "korona" is not found`));
+    }
+  } catch (e) {
+    console.log(C.r(`install failed: ${e.message}`));
+    console.log(C.dim(`fallback: keep korona-cli.js anywhere and run it with "node korona-cli.js"`));
+  }
+}
+
+function cmdUninstall() {
+  const { dst, shim } = shimTargets();
+  let n = 0;
+  for (const f of [dst, shim]) {
+    if (!f) continue;
+    try { fs.unlinkSync(f); n++; } catch { /* not there */ }
+  }
+  console.log(n ? C.g('korona command removed.') : C.y('nothing to remove.'));
 }
 
 /* ------------------------------------------------------------------ *
@@ -443,7 +487,7 @@ function cmdInteractive() {
 /* ------------------------------------------------------------------ *
  * Dispatch
  * ------------------------------------------------------------------ */
-const COMMANDS = { fetch: cmdFetch, list: cmdList, ping: cmdPing, connect: cmdConnect, disconnect: cmdDisconnect, status: cmdStatus, help: cmdHelp, '--help': cmdHelp, '-h': cmdHelp };
+const COMMANDS = { fetch: cmdFetch, list: cmdList, ping: cmdPing, connect: cmdConnect, disconnect: cmdDisconnect, status: cmdStatus, help: cmdHelp, '--help': cmdHelp, '-h': cmdHelp, install: cmdInstall, uninstall: cmdUninstall };
 
 const [cmd, arg] = process.argv.slice(2);
 if (!cmd) cmdInteractive();

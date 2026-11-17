@@ -74,15 +74,28 @@ curl -fL https://github.com/Me-xd-lol/proxy-korona.github.io/releases/latest/dow
 sudo install -m 755 korona /usr/local/bin/korona
 
 # usage
+korona                        # interactive session (prompt + tab-completion + picker)
 korona fetch                  # sync proxy lists from GitHub
 korona list [n]               # show proxies, best ping first
 korona ping [n|--all]         # true TCP latency check
-korona connect <id|addr>      # system-wide proxy (Windows registry / GNOME gsettings)
+korona connect [#|addr]       # system-wide proxy (Windows registry / GNOME gsettings)
 korona disconnect             # back to direct connection
 korona status
 ```
 
-Database lives at `~/.korona-proxy.json`. If `raw.githubusercontent.com` is blocked on the network, the CLI automatically falls back to the GitHub contents API.
+### Windows
+
+```powershell
+# 1. one-time: install Node.js 18+  (winget install OpenJS.NodeJS.LTS  or nodejs.org)
+# 2. download the CLI, e.g. into your home dir:
+curl.exe -fL https://github.com/Me-xd-lol/proxy-korona.github.io/releases/latest/download/korona-cli.js -o korona-cli.js
+# 3. register the "korona" command (per-user, no admin):
+node korona-cli.js install
+# 4. open a NEW terminal — done:
+korona
+```
+
+Database lives at `~/.korona-proxy.json`. If `raw.githubusercontent.com` is blocked on the network, the CLI automatically falls back to the GitHub contents API. `korona uninstall` removes the command again.
 
 ## Structure
 
