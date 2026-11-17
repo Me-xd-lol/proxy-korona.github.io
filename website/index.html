@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Korona Proxy — free proxy manager for Windows</title>
+  <meta name="description" content="Free proxy manager. Import lists from GitHub, check latency, route your whole PC through the fastest proxy." />
+  <link rel="icon" type="image/png" href="../app/icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../app/styles.css" />
+  <link rel="stylesheet" href="site.css" />
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+  <div class="grid-glow" aria-hidden="true"></div>
+
+  <!-- ============ TOPBAR ============ -->
+  <header class="topbar site-topbar">
+    <div class="topbar-left">
+      <div class="brand" style="border:none; padding:0; margin:0;">
+        <div class="brand-mark" aria-hidden="true">
+          <img src="logo.png" alt="" />
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Korona<span>Proxy</span></div>
+          <div class="brand-sub">proxy network</div>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <a class="btn btn-ghost" href="#proxies">Browse proxies</a>
+      <a class="btn btn-primary" id="downloadTopBtn" href="#" data-dl="releases">Download</a>
+    </div>
+  </header>
+
+  <main class="site-main">
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <div class="hero-kicker">Free · no account · open-source lists</div>
+      <h1>Proxy lists, latency checks,<br/><span>one-click connect.</span></h1>
+      <p>Korona Proxy imports free proxy servers from public GitHub &amp; GitLab lists,
+         pings every one of them, and routes your whole PC through the proxy you pick.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" id="downloadHeroBtn" href="#" data-dl="releases">
+          <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+          Download for Windows
+        </a>
+        <a class="btn btn-ghost btn-lg" href="#proxies">Browse live lists</a>
+      </div>
+      <div class="hero-note">Windows 32 &amp; 64-bit · lists refresh automatically · nothing is tracked</div>
+    </section>
+
+    <!-- ============ LIVE LIST BROWSER ============ -->
+    <section class="site-section" id="proxies">
+      <div class="section-head">
+        <h2>Live proxy browser</h2>
+        <p>Fetched straight from public lists in your browser. Ping shown here is an
+           <b>estimate</b> — the desktop app measures true TCP latency and does system-wide connect.</p>
+      </div>
+
+      <!-- Connect card → deep links into the desktop app -->
+      <div class="conn-card site-conn">
+        <div class="conn-status">
+          <span class="conn-dot" id="connDot"></span>
+          <div class="conn-labels">
+            <div class="conn-state" id="connState">No proxy selected</div>
+            <div class="conn-target" id="connTarget">Click a row to pick a proxy</div>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="connectBtn" disabled>
+          <svg viewBox="0 0 24 24"><path d="M13 2L4.5 13.5H11L9.5 22 19 10h-6.5L13 2z"/></svg>
+          Connect via app
+        </button>
+      </div>
+      <div class="site-notice" id="siteNotice" hidden>
+        <span id="siteNoticeText"></span>
+        <a href="#" data-dl="releases" class="notice-link">Get the app →</a>
+      </div>
+
+      <div class="sidebar-stats site-stats">
+        <div class="stat"><span class="stat-val" id="statTotal">0</span><span class="stat-key">total</span></div>
+        <div class="stat"><span class="stat-val" id="statAlive">0</span><span class="stat-key">alive*</span></div>
+        <div class="stat"><span class="stat-val" id="statBest">—</span><span class="stat-key">best ms</span></div>
+      </div>
+
+      <div class="toolbar site-toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input type="text" id="searchInput" placeholder="Search address..." spellcheck="false" />
+        </div>
+        <select class="select" id="protoFilter">
+          <option value="all">All protocols</option>
+          <option value="http">HTTP</option>
+          <option value="socks4">SOCKS4</option>
+          <option value="socks5">SOCKS5</option>
+        </select>
+        <select class="select" id="sourceSelect">
+          <option value="all">All sources</option>
+        </select>
+        <button class="btn btn-ghost" id="pingBtn">
+          <svg viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
+          <span id="pingLabel">Estimate ping</span>
+        </button>
+        <button class="btn btn-primary" id="refreshBtn">
+          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>
+          Fetch lists
+        </button>
+      </div>
+
+      <div class="list-head site-list-head">
+        <span>Address</span>
+        <span class="col-proto">Protocol</span>
+        <span class="col-ping">Ping*</span>
+        <span class="col-actions"></span>
+      </div>
+      <div class="list site-list" id="proxyList"></div>
+      <div class="list-foot" id="listFoot"></div>
+    </section>
+
+    <!-- ============ DOWNLOAD ============ -->
+    <section class="site-section" id="download">
+      <div class="section-head">
+        <h2>Download Korona Proxy</h2>
+        <p>Installer for Windows. Both architectures are built from the same release.</p>
+      </div>
+      <div class="dl-grid">
+        <div class="card dl-card">
+          <div class="dl-badge">RECOMMENDED</div>
+          <h3>Windows 64-bit</h3>
+          <p>For any modern Windows 10 / 11 PC or laptop.</p>
+          <a class="btn btn-primary btn-block" href="#" data-dl="x64">
+            <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+            Download · x64
+          </a>
+        </div>
+        <div class="card dl-card">
+          <div class="dl-badge dim">LEGACY</div>
+          <h3>Windows 32-bit</h3>
+          <p>For older machines and 32-bit Windows.</p>
+          <a class="btn btn-ghost btn-block" href="#" data-dl="ia32">
+            <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+            Download · ia32
+          </a>
+        </div>
+      </div>
+      <p class="dl-alt">Download links come straight from this project's GitHub releases:
+        <a href="#" data-dl="releases" class="notice-link">open releases page →</a></p>
+
+      <div class="steps">
+        <div class="step"><span>1</span><div><b>Install &amp; open</b><p>Starter proxy lists sync automatically on first launch.</p></div></div>
+        <div class="step"><span>2</span><div><b>Ping all</b><p>Real TCP latency for every proxy, sorted fastest first.</p></div></div>
+        <div class="step"><span>3</span><div><b>Connect</b><p>One click routes your whole system through the proxy.</p></div></div>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <div class="brand-name">Korona<span>Proxy</span></div>
+      <p>Proxy lists are fetched from public GitHub sources and belong to their owners.
+         Use responsibly and within the laws of your country. Ping shown on this site (*)
+         is a browser-based estimate.</p>
+    </footer>
+  </main>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="../app/parse.js"></script>
+  <script src="site.js"></script>
+</body>
+</html>
