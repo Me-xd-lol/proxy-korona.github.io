@@ -10,7 +10,7 @@
  * Config — set this to your GitHub repo where releases are published
  * ------------------------------------------------------------------ */
 
-const GITHUB_REPO = 'proxy-korona/proxy-korona.github.io'; // releases live here
+const GITHUB_REPO = 'me-xd-lol/proxy-korona.github.io'; // releases live here
 const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 const ASSET = (arch) => `https://github.com/${GITHUB_REPO}/releases/latest/download/KoronaProxy-Setup-${arch}.exe`;
 const SCHEME = 'korona';
